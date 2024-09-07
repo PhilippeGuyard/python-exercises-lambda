@@ -23,7 +23,7 @@ def send_email(subject, body):
             f"https://api.eu.mailgun.net/v3/{mailgun_domain}/messages",
             auth=("api", mailgun_api_key),
             data={
-                "from": f"Automated Service <noreply@{mailgun_domain}>",
+                "from": f"Your daily Python exercise <noreply@{mailgun_domain}>",
                 "to": recipient_email,
                 "subject": subject,
                 "html": body,
