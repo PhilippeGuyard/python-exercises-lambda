@@ -44,4 +44,4 @@ jobs:
 
     - name: Deploy to AWS Lambda
       run: |
-        aws lambda update-function-code --function-name PapertrailWebhookHandler --zip-file fileb://lambda_function.zip
+        aws lambda update-function-code --function-name PythonExercises --zip-file fileb://lambda_function.zip
