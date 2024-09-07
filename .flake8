@@ -1,0 +1,9 @@
+[flake8]
+# Exclude specific directories and files
+exclude = 
+    .venv/,
+    venv/,
+    .flake8
+
+ignore = E501
+# ignore long lines
