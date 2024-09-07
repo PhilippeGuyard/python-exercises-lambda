@@ -1,0 +1,15 @@
+# Python
+*.pyc
+__pycache__/
+
+# AWS Lambda
+*.zip
+
+# Logs
+*.log
+
+# Virtual environment
+venv/
+
+.env
+package/
