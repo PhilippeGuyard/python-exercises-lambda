@@ -10,38 +10,47 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v2
+      - name: Checkout code
+        uses: actions/checkout@v2
 
-    - name: Set up Python
-      uses: actions/setup-python@v2
-      with:
-        python-version: 3.12
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: 3.12
 
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        # Create a directory for the deployment package
-        mkdir package
-        # Install dependencies into the package directory
-        pip install -r requirements.txt -t package/
+      - name: Install flake8
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8
 
-    - name: Package Lambda function
-      run: |
-        # Copy the Lambda function code into the package directory
-        cp lambda_function.py package/
-        # Zip the contents of the package directory
-        cd package
-        zip -r ../lambda_function.zip .
-        cd ..
+      - name: Run flake8 for Python code quality
+        run: |
+          flake8 --exclude .venv,venv,package,lambda_function.zip
 
-    - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v1
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: 'eu-west-2'
+      - name: Install dependencies
+        run: |
+          # Create a directory for the deployment package
+          mkdir package
+          # Install dependencies into the package directory
+          pip install -r requirements.txt -t package/
 
-    - name: Deploy to AWS Lambda
-      run: |
-        aws lambda update-function-code --function-name PythonExercises --zip-file fileb://lambda_function.zip --no-cli-pager > /dev/null 2>&1
+      - name: Package Lambda function
+        run: |
+          # Copy the Lambda function code into the package directory
+          cp lambda_function.py package/
+          # Zip the contents of the package directory
+          cd package
+          zip -r ../lambda_function.zip .
+          cd ..
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: 'eu-west-2'
+
+      - name: Deploy to AWS Lambda
+        run: |
+          # Deploy the zipped package to AWS Lambda
+          aws lambda update-function-code --function-name PythonExercises --zip-file fileb://lambda_function.zip --no-cli-pager > /dev/null 2>&1
