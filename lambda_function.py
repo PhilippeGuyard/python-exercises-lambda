@@ -53,7 +53,7 @@ def lambda_handler(event, context):
                         "1) Title"
                         "2) A cheat sheet summary of the principles at play. For example, if dealing with list comprehensions, "
                         "you will give a few examples of generic list comprehensions. You will add brief code comments but no "
-                        "other text at this point."
+                        "other text at this point. However all the elements needed to solve the problem must be present in your examples."
                         "3) Problem statement in words: this is the problem that the users will need to solve."
                         "4) A few hints as to how to solve the problem"
                         "5) The solution to the problem"
