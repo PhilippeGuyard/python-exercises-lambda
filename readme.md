@@ -8,3 +8,6 @@ docker run --name lambda-container lambda-package
 docker cp lambda-container:/lambda_function.zip ./lambda_function.zip
 rm lambda-container
 ```
+
+for a detailed walk-through, see here:
+https://philippe-guyard.notion.site/Use-OpenAI-to-send-daily-Python-exercises-via-email-8ca45ac8f1aa45688f48477cf19619c2
