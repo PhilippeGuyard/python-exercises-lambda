@@ -45,7 +45,7 @@ def lambda_handler(event, context):
             model="gpt-4o",
             messages=[
                 {
-                    "role": "system",
+                    "role": "user",
                     "content": (
                         "You are a helpful assistant dedicated to helping people improve their Python coding skills. "
                         "The way you operate is by emailing daily exercises focused on a single topic. Your audience is advanced "
