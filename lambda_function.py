@@ -1,25 +1,32 @@
-import json
 import logging
 import os
-
 import requests
-from dotenv import load_dotenv
+import json
 from openai import OpenAI
+from dotenv import load_dotenv
+from django.utils import timezone
+from django.core.cache import caches
+from comms_messages.models import Message, APICallLog
 
-# Set up logging
-logger = logging.getLogger()
-logger.setLevel("INFO")
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
 
 def send_email(subject, body):
-    mailgun_api_key = os.environ["MAILGUN_API_KEY"]
-    mailgun_domain = os.environ["MAILGUN_DOMAIN"]
-    recipient_email = os.environ["RECIPIENT_EMAIL"]
+    """
+    Sends an email using the Mailgun API.
+    """
+    mailgun_api_key = os.environ.get("MAILGUN_API_KEY")
+    mailgun_domain = os.environ.get("MAILGUN_DOMAIN")
+    recipient_email = os.environ.get("RECIPIENT_EMAIL")
+
+    if not (mailgun_api_key and mailgun_domain and recipient_email):
+        logger.error("Missing Mailgun configuration in environment variables.")
+        return
 
     try:
-        result = requests.post(
+        response = requests.post(
             f"https://api.eu.mailgun.net/v3/{mailgun_domain}/messages",
             auth=("api", mailgun_api_key),
             data={
@@ -29,57 +36,100 @@ def send_email(subject, body):
                 "html": body,
             },
         )
-        result.raise_for_status()
-        logger.info("Email sent successfully")
+        response.raise_for_status()
+        logger.info("Email sent successfully.")
     except requests.exceptions.RequestException as e:
-        logger.error("Error sending email via Mailgun: %s", e)
+        logger.error(f"Error sending email via Mailgun: {e}")
+
+
+def generate_openai_prompt():
+    """
+    Generates the prompt to be sent to OpenAI.
+    """
+    return (
+        "You are a helpful assistant dedicated to helping people improve their Python coding skills. "
+        "The way you operate is by emailing daily exercises focused on a single topic. Your audience is advanced "
+        "developers wanting to brush up on their skills. Your emails are structured in this way:"
+        "1) Title"
+        "2) A cheat sheet summary of the principles at play, "
+        "with basic examples of what principles will need to be applied in the actual problem. You will add brief code comments but no "
+        "other text at this point. However, all the elements needed to solve the problem must be present in your examples."
+        "3) Problem statement in words: this is the problem that the users will need to solve."
+        "4) A few hints as to how to solve the problem"
+        "5) The solution to the problem"
+        "6) Possible extensions to what was learned."
+        "Your final output will be HTML, with code examples formatted as such."
+        "Make sure you include the title, cheat sheet, problem statement, hints, solution, and extensions."
+        "Also make sure your problems are aimed at an advanced audience."
+        "And make sure your email is formatted correctly."
+    )
 
 
 def lambda_handler(event, context):
+    """
+    AWS Lambda handler to generate OpenAI response and send it via email.
+    """
     logger.info("Scheduled task started.")
 
     try:
-        # Create OpenAI client and make a request
-        client = OpenAI()
-        response = client.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {
-                    "role": "user",
-                    "content": (
-                        "You are a helpful assistant dedicated to helping people improve their Python coding skills. "
-                        "The way you operate is by emailing daily exercises focused on a single topic. Your audience is advanced "
-                        "developers wanting to brush up on their skills. Your emails are structured in this way:"
-                        "1) Title"
-                        "2) A cheat sheet summary of the principles at play, "
-                        "with basic examples of what principles will need to be applied in the actual problem. You will add brief code comments but no "
-                        "other text at this point. However all the elements needed to solve the problem must be present in your examples."
-                        "3) Problem statement in words: this is the problem that the users will need to solve."
-                        "4) A few hints as to how to solve the problem"
-                        "5) The solution to the problem"
-                        "6) Possible extensions to what was learned."
-                        "Your final output will be HTML, with code examples formatted as such."
-                        "Make sure you include the title, cheat sheet, problem statement, hints, solution, and extensions."
-                        "Also make sure your problems are aimed at an advanced audience."
-                        "And make sure your email is formatted correctly."
-                    ),
-                },
-            ],
+        # Load environment variables
+        api_key = os.environ.get("OPENAI_API_KEY")
+        assistant_id = os.environ.get("OPENAI_ASSISTANT_ID")
+
+        if not api_key:
+            raise ValueError("Missing OPENAI_API_KEY. Please set it in the environment variables.")
+        if not assistant_id:
+            raise ValueError("Missing OPENAI_ASSISTANT_ID. Please set it in the environment variables.")
+
+        # Initialize OpenAI client
+        client = OpenAI(api_key=api_key)
+
+        # Generate prompt
+        prompt = generate_openai_prompt()
+
+        # Create thread and send prompt to OpenAI
+        logger.info("Sending prompt to OpenAI.")
+        thread = client.beta.threads.create()
+        client.beta.threads.messages.create(
+            thread_id=thread.id,
+            role="user",
+            content=prompt,
         )
 
-        openai_result = response.choices[0].message.content.strip()
-        logger.info("OpenAI response received")
+        run = client.beta.threads.runs.create_and_poll(
+            thread_id=thread.id,
+            assistant_id=assistant_id,
+            instructions="Generate the response based on the provided instructions."
+        )
 
-        # Send the results via email
-        send_email("Automated OpenAI Task Result", openai_result)
+        if run.status != "completed":
+            logger.error(f"OpenAI response generation failed. Status: {run.status}")
+            return {"statusCode": 500, "body": json.dumps("Failed to generate response.")}
+
+        # Retrieve response
+        logger.info("Fetching OpenAI response.")
+        messages = client.beta.threads.messages.list(thread_id=thread.id)
+        response_content = messages.data[0].content[0].text.value
+
+        # Log API usage
+        tokens_used = run.usage.total_tokens
+        logger.info(f"OpenAI usage: {tokens_used} tokens used.")
+
+        # Save API usage to database
+        APICallLog.objects.create(
+            date_time=timezone.now(),
+            tokens_used=tokens_used
+        )
+
+        # Cache response
+        caches['databaseCache'].set('openai_daily_exercise', response_content)
+
+        # Send email
+        send_email("Your Daily Python Exercise", response_content)
+
+        return {"statusCode": 200, "body": json.dumps("Email sent successfully.")}
 
     except Exception as e:
-        logger.error("Error processing: %s", e)
-        error_message = f"Error processing the request: {e}"
-        send_email("OpenAI Task Processing Failed", error_message)
-        return {
-            "statusCode": 500,
-            "body": json.dumps(error_message),
-        }
-
-    return {"statusCode": 200, "body": json.dumps("Email sent successfully")}
+        logger.error(f"Error processing task: {e}")
+        send_email("OpenAI Task Processing Failed", f"Error: {e}")
+        return {"statusCode": 500, "body": json.dumps(f"Error: {e}")}
