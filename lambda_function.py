@@ -4,9 +4,6 @@ import requests
 import json
 from openai import OpenAI
 from dotenv import load_dotenv
-from django.utils import timezone
-from django.core.cache import caches
-from comms_messages.models import Message, APICallLog
 
 logger = logging.getLogger(__name__)
 
@@ -48,20 +45,20 @@ def generate_openai_prompt():
     """
     return (
         "You are a helpful assistant dedicated to helping people improve their Python coding skills. "
-        "The way you operate is by emailing daily exercises focused on a single topic. Your audience is advanced "
-        "developers wanting to brush up on their skills. Your emails are structured in this way:"
-        "1) Title"
-        "2) A cheat sheet summary of the principles at play, "
-        "with basic examples of what principles will need to be applied in the actual problem. You will add brief code comments but no "
-        "other text at this point. However, all the elements needed to solve the problem must be present in your examples."
-        "3) Problem statement in words: this is the problem that the users will need to solve."
-        "4) A few hints as to how to solve the problem"
-        "5) The solution to the problem"
-        "6) Possible extensions to what was learned."
-        "Your final output will be HTML, with code examples formatted as such."
-        "Make sure you include the title, cheat sheet, problem statement, hints, solution, and extensions."
-        "Also make sure your problems are aimed at an advanced audience."
-        "And make sure your email is formatted correctly."
+        "Your task is to create daily exercises for advanced developers to sharpen their skills. The response must be a well-formatted "
+        "HTML email structured as follows:"
+        "<h1>Title of the Exercise</h1>"
+        "<h2>Cheat Sheet</h2>"
+        "<pre><code>Code snippets with explanations</code></pre>"
+        "<h2>Problem Statement</h2>"
+        "A concise description of the problem in words."
+        "<h2>Hints</h2>"
+        "Bullet points providing guidance."
+        "<h2>Solution</h2>"
+        "<pre><code>Complete solution code with comments</code></pre>"
+        "<h2>Extensions</h2>"
+        "Ideas for expanding upon the learned concepts."
+        "Ensure the HTML is clean and uses proper semantic tags. All code should be enclosed in <pre><code> blocks, properly indented."
     )
 
 
@@ -77,9 +74,13 @@ def lambda_handler(event, context):
         assistant_id = os.environ.get("OPENAI_ASSISTANT_ID")
 
         if not api_key:
-            raise ValueError("Missing OPENAI_API_KEY. Please set it in the environment variables.")
+            raise ValueError(
+                "Missing OPENAI_API_KEY. Please set it in the environment variables."
+            )
         if not assistant_id:
-            raise ValueError("Missing OPENAI_ASSISTANT_ID. Please set it in the environment variables.")
+            raise ValueError(
+                "Missing OPENAI_ASSISTANT_ID. Please set it in the environment variables."
+            )
 
         # Initialize OpenAI client
         client = OpenAI(api_key=api_key)
@@ -99,12 +100,15 @@ def lambda_handler(event, context):
         run = client.beta.threads.runs.create_and_poll(
             thread_id=thread.id,
             assistant_id=assistant_id,
-            instructions="Generate the response based on the provided instructions."
+            instructions="Generate the response based on the provided instructions.",
         )
 
         if run.status != "completed":
             logger.error(f"OpenAI response generation failed. Status: {run.status}")
-            return {"statusCode": 500, "body": json.dumps("Failed to generate response.")}
+            return {
+                "statusCode": 500,
+                "body": json.dumps("Failed to generate response."),
+            }
 
         # Retrieve response
         logger.info("Fetching OpenAI response.")
@@ -115,17 +119,13 @@ def lambda_handler(event, context):
         tokens_used = run.usage.total_tokens
         logger.info(f"OpenAI usage: {tokens_used} tokens used.")
 
-        # Save API usage to database
-        APICallLog.objects.create(
-            date_time=timezone.now(),
-            tokens_used=tokens_used
+        # Append usage to email body
+        response_with_usage = (
+            f"{response_content}<br><br><strong>Tokens Used:</strong> {tokens_used}"
         )
 
-        # Cache response
-        caches['databaseCache'].set('openai_daily_exercise', response_content)
-
         # Send email
-        send_email("Your Daily Python Exercise", response_content)
+        send_email("Your Daily Python Exercise", response_with_usage)
 
         return {"statusCode": 200, "body": json.dumps("Email sent successfully.")}
 
