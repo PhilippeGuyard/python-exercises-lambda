@@ -2,8 +2,10 @@ import logging
 import os
 import requests
 import json
+import random
 from openai import OpenAI
 from dotenv import load_dotenv
+from topics_list import topics  # Import topics from a separate file
 
 logger = logging.getLogger(__name__)
 
@@ -39,13 +41,14 @@ def send_email(subject, body):
         logger.error(f"Error sending email via Mailgun: {e}")
 
 
-def generate_openai_prompt():
+def generate_openai_prompt(topic):
     """
-    Generates the prompt to be sent to OpenAI.
+    Generates the prompt to be sent to OpenAI based on the selected topic.
     """
     return (
-        "You are a helpful assistant dedicated to helping people improve their Python coding skills. "
-        "Your task is to create daily exercises for advanced developers to sharpen their skills. The response must be a well-formatted "
+        f"You are a helpful assistant dedicated to helping people improve their Python coding skills. "
+        f"Today's topic is '{topic}'. "
+        "Your task is to create a daily exercise for advanced developers to sharpen their skills. The response must be a well-formatted "
         "HTML email structured as follows:"
         "<h1>Title of the Exercise</h1>"
         "<h2>Cheat Sheet</h2>"
@@ -82,11 +85,15 @@ def lambda_handler(event, context):
                 "Missing OPENAI_ASSISTANT_ID. Please set it in the environment variables."
             )
 
+        # Select a random topic
+        topic = random.choice(topics)
+        logger.info(f"Selected topic: {topic}")
+
         # Initialize OpenAI client
         client = OpenAI(api_key=api_key)
 
         # Generate prompt
-        prompt = generate_openai_prompt()
+        prompt = generate_openai_prompt(topic)
 
         # Create thread and send prompt to OpenAI
         logger.info("Sending prompt to OpenAI.")
@@ -119,13 +126,15 @@ def lambda_handler(event, context):
         tokens_used = run.usage.total_tokens
         logger.info(f"OpenAI usage: {tokens_used} tokens used.")
 
-        # Append usage to email body
+        # Append topic, usage, and content to email body
+        email_subject = f"Python Exercise: {topic}"
         response_with_usage = (
+            f"<h2>Selected Topic: {topic}</h2>"
             f"{response_content}<br><br><strong>Tokens Used:</strong> {tokens_used}"
         )
 
         # Send email
-        send_email("Your Daily Python Exercise", response_with_usage)
+        send_email(email_subject, response_with_usage)
 
         return {"statusCode": 200, "body": json.dumps("Email sent successfully.")}
 
