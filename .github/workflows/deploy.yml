@@ -36,8 +36,8 @@ jobs:
 
       - name: Package Lambda function
         run: |
-          # Copy the Lambda function code into the package directory
-          cp lambda_function.py package/
+          # Copy the Lambda function code and topics_list.py into the package directory
+          cp lambda_function.py topics_list.py package/
           # Zip the contents of the package directory
           cd package
           zip -r ../lambda_function.zip .
