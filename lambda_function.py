@@ -148,7 +148,7 @@ def generate_detailed_prompt(topic):
     return (
         f"You are a helpful assistant dedicated to helping people improve their Python coding skills. "
         f"Today's topic is '{topic}'. "
-        "Your task is to create a daily exercise for advanced developers to sharpen their skills. The response must be a well-formatted "
+        "Your task is to create a daily exercise for intermediate to advanced developers to sharpen their skills. The response must be a well-formatted "
         "HTML email structured as follows:"
         "<h1>Title of the Exercise</h1>"
         "<h2>Cheat Sheet</h2>"
