@@ -1,22 +1,23 @@
-from notion_client import Client
-from bs4 import BeautifulSoup
+import re
 import logging
 import os
 import random
-from openai import OpenAI
-from dotenv import load_dotenv
-from topics_list import topics
 from datetime import datetime, timezone
+
 import requests
+from bs4 import BeautifulSoup
+from dotenv import load_dotenv
+from notion_client import Client
+from openai import OpenAI
+
+from topics_list import topics
 
 logger = logging.getLogger(__name__)
 load_dotenv()
 
 
 def send_email(subject, body):
-    """
-    Sends an email using the Mailgun API.
-    """
+    """Sends an HTML email via Mailgun."""
     mailgun_api_key = os.environ.get("MAILGUN_API_KEY")
     mailgun_domain = os.environ.get("MAILGUN_DOMAIN")
     recipient_email = os.environ.get("RECIPIENT_EMAIL")
@@ -35,6 +36,7 @@ def send_email(subject, body):
                 "subject": subject,
                 "html": body,
             },
+            timeout=30,
         )
         response.raise_for_status()
         logger.info("Email sent successfully.")
@@ -45,9 +47,7 @@ def send_email(subject, body):
 def send_to_notion(
     topic, cheat_sheet, problem_statement, hints, solution, extensions, tokens_used
 ):
-    """
-    Logs the exercise to Notion.
-    """
+    """Logs the exercise to Notion."""
     notion_token = os.environ.get("NOTION_API_KEY")
     notion_database_id = os.environ.get("NOTION_DATABASE_ID")
 
@@ -58,10 +58,8 @@ def send_to_notion(
     notion = Client(auth=notion_token)
 
     try:
-        # Add current date
         current_date = datetime.now(timezone.utc).isoformat()
 
-        # Prepare Notion blocks
         hints_block = [
             {
                 "type": "bulleted_list_item",
@@ -77,7 +75,6 @@ def send_to_notion(
             for extension in extensions
         ]
 
-        # Create Notion page
         notion.pages.create(
             parent={"database_id": notion_database_id},
             properties={
@@ -141,50 +138,59 @@ def send_to_notion(
         logger.error(f"Error logging data to Notion: {e}")
 
 
-def generate_detailed_prompt(topic):
-    """
-    Generates a detailed prompt for OpenAI based on the selected topic.
-    """
-    return (
-        f"You are a helpful assistant dedicated to helping people improve their Python coding skills. "
-        f"Today's topic is '{topic}'. "
-        "Your task is to create a daily exercise for intermediate to advanced developers to sharpen their skills. The response must be a well-formatted "
-        "HTML email structured as follows:"
-        "<h1>Title of the Exercise</h1>"
-        "<h2>Cheat Sheet</h2>"
-        "<pre><code>Code snippets with explanations</code></pre>"
-        "<h2>Problem Statement</h2>"
-        "A concise description of the problem in words."
-        "<h2>Hints</h2>"
-        "Bullet points providing guidance."
-        "<h2>Solution</h2>"
-        "<pre><code>Complete solution code with comments</code></pre>"
-        "<h2>Extensions</h2>"
-        "Ideas for expanding upon the learned concepts."
-        "Ensure the HTML is clean and uses proper semantic tags. All code should be enclosed in <pre><code> blocks, properly indented."
+def generate_prompt_messages(topic):
+    """Returns Chat Completions messages for generating a Python exercise."""
+    system_message = (
+        "You are a helpful assistant dedicated to helping people improve their Python coding skills. "
+        "Your task is to create daily exercises for intermediate to advanced developers. "
+        "Respond with well-formatted HTML using this exact structure:\n"
+        "<h1>Title of the Exercise</h1>\n"
+        "<h2>Cheat Sheet</h2>\n"
+        "<pre><code>Key syntax and concepts with brief explanations as comments</code></pre>\n"
+        "<h2>Problem Statement</h2>\n"
+        "<p>A concise description of the problem.</p>\n"
+        "<h2>Hints</h2>\n"
+        "<ul><li>Hint 1</li><li>Hint 2</li></ul>\n"
+        "<h2>Solution</h2>\n"
+        "<pre><code>Complete solution code with inline comments</code></pre>\n"
+        "<h2>Extensions</h2>\n"
+        "<ul><li>Extension idea 1</li><li>Extension idea 2</li></ul>\n"
+        "Use proper semantic HTML. Enclose all code in <pre><code> blocks, properly indented."
     )
+    return [
+        {"role": "system", "content": system_message},
+        {"role": "user", "content": f"Generate a daily Python exercise on the topic: '{topic}'."},
+    ]
 
 
 def parse_openai_response(response_content):
-    """
-    Parses the OpenAI HTML response to extract key sections.
-    """
+    """Parses the OpenAI HTML response to extract key sections."""
     soup = BeautifulSoup(response_content, "html.parser")
 
-    # Extract sections
-    topic = soup.find("h1").text if soup.find("h1") else "Python Exercise"
-    cheat_sheet = (
-        soup.find("pre").text if soup.find("pre") else "No cheat sheet available."
-    )
-    problem_statement = soup.find("h2", text="Problem Statement").find_next("p").text
-    hints = [
-        li.text for li in soup.find("h2", text="Hints").find_next("ul").find_all("li")
-    ]
-    solution = soup.find("h2", text="Solution").find_next("pre").text
-    extensions = [
-        li.text
-        for li in soup.find("h2", text="Extensions").find_next("ul").find_all("li")
-    ]
+    def find_h2(text):
+        return soup.find("h2", string=re.compile(rf"\s*{re.escape(text)}\s*", re.IGNORECASE))
+
+    topic_tag = soup.find("h1")
+    topic = topic_tag.get_text(strip=True) if topic_tag else "Python Exercise"
+
+    cheat_sheet_pre = soup.find("pre")
+    cheat_sheet = cheat_sheet_pre.get_text(strip=True) if cheat_sheet_pre else "No cheat sheet available."
+
+    problem_h2 = find_h2("Problem Statement")
+    problem_p = problem_h2.find_next("p") if problem_h2 else None
+    problem_statement = problem_p.get_text(strip=True) if problem_p else "No problem statement available."
+
+    hints_h2 = find_h2("Hints")
+    hints_ul = hints_h2.find_next("ul") if hints_h2 else None
+    hints = [li.get_text(strip=True) for li in hints_ul.find_all("li")] if hints_ul else []
+
+    solution_h2 = find_h2("Solution")
+    solution_pre = solution_h2.find_next("pre") if solution_h2 else None
+    solution = solution_pre.get_text(strip=True) if solution_pre else "No solution available."
+
+    extensions_h2 = find_h2("Extensions")
+    extensions_ul = extensions_h2.find_next("ul") if extensions_h2 else None
+    extensions = [li.get_text(strip=True) for li in extensions_ul.find_all("li")] if extensions_ul else []
 
     return topic, cheat_sheet, problem_statement, hints, solution, extensions
 
@@ -192,126 +198,141 @@ def parse_openai_response(response_content):
 def generate_email_html(
     topic, cheat_sheet, problem_statement, hints, solution, extensions, date, tokens_used
 ):
-    """
-    Generates formatted HTML for the email.
-    """
+    """Generates styled HTML for the exercise email."""
     hints_html = "".join(f"<li>{hint}</li>" for hint in hints)
     extensions_html = "".join(f"<li>{extension}</li>" for extension in extensions)
 
-    email_html = f"""
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>{topic}</title>
-        <style>
-            /* CSS as before */
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <h1>{topic}</h1>
-            <h2>Cheat Sheet</h2>
-            <pre><code>{cheat_sheet}</code></pre>
-            <h2>Problem Statement</h2>
-            <p>{problem_statement}</p>
-            <h2>Hints</h2>
-            <ul>{hints_html}</ul>
-            <h2>Solution</h2>
-            <pre><code>{solution}</code></pre>
-            <h2>Extensions</h2>
-            <ul>{extensions_html}</ul>
-            <div class="footer">
-                <p>Generated on {date}</p>
-                <p>Tokens Used: {tokens_used}</p>
-            </div>
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{topic}</title>
+    <style>
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: #f5f5f5;
+            color: #333;
+            margin: 0;
+            padding: 20px;
+        }}
+        .container {{
+            max-width: 700px;
+            margin: 0 auto;
+            background: #fff;
+            border-radius: 8px;
+            padding: 32px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        }}
+        h1 {{
+            font-size: 1.6em;
+            color: #1a1a2e;
+            border-bottom: 3px solid #4f8ef7;
+            padding-bottom: 8px;
+        }}
+        h2 {{
+            font-size: 1.1em;
+            color: #4f8ef7;
+            margin-top: 28px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }}
+        pre {{
+            background: #1e1e2e;
+            color: #cdd6f4;
+            border-radius: 6px;
+            padding: 16px;
+            overflow-x: auto;
+            font-size: 0.9em;
+            line-height: 1.5;
+        }}
+        code {{
+            font-family: "JetBrains Mono", "Fira Code", "Courier New", monospace;
+        }}
+        p {{
+            line-height: 1.7;
+        }}
+        ul {{
+            padding-left: 20px;
+            line-height: 1.8;
+        }}
+        li {{
+            margin-bottom: 4px;
+        }}
+        .footer {{
+            margin-top: 40px;
+            padding-top: 16px;
+            border-top: 1px solid #eee;
+            font-size: 0.8em;
+            color: #999;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>{topic}</h1>
+
+        <h2>Cheat Sheet</h2>
+        <pre><code>{cheat_sheet}</code></pre>
+
+        <h2>Problem Statement</h2>
+        <p>{problem_statement}</p>
+
+        <h2>Hints</h2>
+        <ul>{hints_html}</ul>
+
+        <h2>Solution</h2>
+        <pre><code>{solution}</code></pre>
+
+        <h2>Extensions</h2>
+        <ul>{extensions_html}</ul>
+
+        <div class="footer">
+            <p>Generated on {date} &nbsp;|&nbsp; Tokens used: {tokens_used}</p>
         </div>
-    </body>
-    </html>
-    """
-    return email_html
+    </div>
+</body>
+</html>"""
 
 
 def lambda_handler(event, context):
-    """
-    AWS Lambda handler to generate OpenAI response, send it via email, and log it to Notion.
-    """
+    """AWS Lambda handler: generates a Python exercise, emails it, and logs it to Notion."""
     logger.info("Scheduled task started.")
 
     try:
-        # Load environment variables
         api_key = os.environ.get("OPENAI_API_KEY")
-        assistant_id = os.environ.get("OPENAI_ASSISTANT_ID")
-
         if not api_key:
             raise ValueError("Missing OPENAI_API_KEY.")
-        if not assistant_id:
-            raise ValueError("Missing OPENAI_ASSISTANT_ID.")
 
-        # Select a random topic
         topic = random.choice(topics)
         logger.info(f"Selected topic: {topic}")
 
-        # Initialize OpenAI client
         client = OpenAI(api_key=api_key)
+        messages = generate_prompt_messages(topic)
 
-        # Generate detailed prompt
-        prompt = generate_detailed_prompt(topic)
-
-        # Interact with OpenAI
         logger.info("Sending prompt to OpenAI.")
-        thread = client.beta.threads.create()
-        client.beta.threads.messages.create(
-            thread_id=thread.id, role="user", content=prompt
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=messages,
+            timeout=60,
         )
 
-        run = client.beta.threads.runs.create_and_poll(
-            thread_id=thread.id,
-            assistant_id=assistant_id,
-            instructions="Generate a detailed exercise based on the prompt.",
-        )
+        response_content = response.choices[0].message.content
+        tokens_used = response.usage.total_tokens
+        logger.info(f"OpenAI response received. Tokens used: {tokens_used}")
 
-        if run.status != "completed":
-            logger.error(f"OpenAI response generation failed. Status: {run.status}")
-            return {"statusCode": 500, "body": "Failed to generate response."}
-
-        # Retrieve OpenAI response
-        logger.info("Fetching OpenAI response.")
-        messages = client.beta.threads.messages.list(thread_id=thread.id)
-        response_content = messages.data[0].content[0].text.value
-        tokens_used = run.usage.total_tokens
-
-        # Parse OpenAI response
         topic, cheat_sheet, problem_statement, hints, solution, extensions = (
             parse_openai_response(response_content)
         )
 
-        # Generate email HTML
         date = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
         email_html = generate_email_html(
-            topic,
-            cheat_sheet,
-            problem_statement,
-            hints,
-            solution,
-            extensions,
-            date,
-            tokens_used,
+            topic, cheat_sheet, problem_statement, hints, solution, extensions, date, tokens_used
         )
 
-        # Send email
         send_email(f"Python Exercise: {topic}", email_html)
-
-        # Log to Notion
         send_to_notion(
-            topic,
-            cheat_sheet,
-            problem_statement,
-            hints,
-            solution,
-            extensions,
-            tokens_used,
+            topic, cheat_sheet, problem_statement, hints, solution, extensions, tokens_used
         )
 
         return {

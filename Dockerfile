@@ -10,9 +10,9 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --target ./package -r requirements.txt
 
-# Copy the rest of the application code
-COPY lambda_function.py .env ./
+# Copy application source
+COPY lambda_function.py topics_list.py ./
 
-# Change directory to package to zip everything correctly
-RUN cd package && zip -r9 /lambda_function.zip . && cd .. && zip -g /lambda_function.zip lambda_function.py .env
+# Create deployment zip
+RUN cd package && zip -r9 /lambda_function.zip . && cd .. && zip -g /lambda_function.zip lambda_function.py topics_list.py
 
